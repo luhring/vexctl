@@ -6,17 +6,18 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/openvex/vexctl/internal/triage/table"
 	"github.com/openvex/vexctl/pkg/formats"
 )
 
 type model struct {
+	data formats.Normalized
+
 	dataWindowStart, dataWindowSize int
 	dataRowSelected                 int
 
-	data formats.Normalized
-	mode Mode
-
+	mode   Mode
+	table  table.Model
 	filter textinput.Model
 }
 
@@ -27,7 +28,7 @@ const (
 	ModeFilterEntry
 )
 
-func NewModel(data formats.Normalized) tea.Model {
+func New(data formats.Normalized) tea.Model {
 	ms := data.Matches
 
 	sort.SliceStable(ms, func(i, j int) bool {
@@ -42,12 +43,9 @@ func NewModel(data formats.Normalized) tea.Model {
 	})
 
 	return model{
-		dataWindowStart: 0,
-		dataWindowSize:  10,
-		dataRowSelected: 0,
-		data:            data,
-		mode:            ModeDataScroll,
-		filter:          textinput.Model{},
+		table:  table.New(data),
+		mode:   ModeDataScroll,
+		filter: textinput.Model{},
 	}
 }
 
@@ -73,64 +71,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "q":
 				return m, tea.Quit
 
-			case "up", "k":
-				return moveUp(m), nil
-
-			case "down", "j":
-				return moveDown(m), nil
-
-			case "g":
-				return jumpToStart(m), nil
-
-			case "G":
-				return jumpToEnd(m), nil
-
-			case "w":
-				return pageUp(m), nil
-
-			case "z":
-				return pageDown(m), nil
-
 			case "/":
 				m.mode = ModeFilterEntry
-				m = updateWindow(m)
 				m.filter = newFilterTextInput()
 				m.filter.Focus()
 				return m, textinput.Blink
 
 			case "n":
 				if expr := m.filter.Value(); expr != "" {
-					foundIndex := m.findNext(expr)
-					if foundIndex >= 0 {
-						m.dataRowSelected = foundIndex
-						m = updateWindow(m)
-						return m, nil
+					updatedTable, err := m.table.FindNext()
+					if err == table.NoMatchFound {
+						// TODO: handle not found
+						break
 					}
 
-					// TODO: handle not found
+					m.table = updatedTable
+					return m, nil
 				}
 
 			case "N":
 				if expr := m.filter.Value(); expr != "" {
-					foundIndex := m.findPrevious(expr)
-					if foundIndex >= 0 {
-						m.dataRowSelected = foundIndex
-						m = updateWindow(m)
+					updatedTable, err := m.table.FindPrevious()
+					if err == table.NoMatchFound {
+						// TODO: handle not found
 						return m, nil
 					}
 
-					// TODO: handle not found
+					m.table = updatedTable
+					return m, nil
 				}
 			}
+
+			m.table, cmd = m.table.Update(msg)
+			return m, cmd
 
 		case ModeFilterEntry:
 			if msg.String() == "enter" {
 				expr := m.filter.Value()
-				foundIndex := m.find(expr)
-				if foundIndex >= 0 {
-					m.dataRowSelected = foundIndex
-					m = updateWindow(m)
+				updatedTable, err := m.table.Find(expr)
+				if err == table.NoMatchFound {
+					// TODO: handle not found
+					return m, nil
 				}
+
+				m.table = updatedTable
+
 				m.filter.Blur()
 				m.mode = ModeDataScroll
 				return m, nil
@@ -147,8 +132,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		m.dataWindowSize = msg.Height - lipgloss.Height(renderHeaderRow())
-		m = updateWindow(m)
+		m.table = m.table.SetHeight(msg.Height)
 		return m, nil
 	}
 
@@ -156,63 +140,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func filterMatchFound(match formats.Match, expr string) bool {
-	return strings.Contains(match.Package.Name, expr) || strings.Contains(match.Vulnerability.ID, expr)
-}
-
-func (m model) find(expr string) int {
-	for i, match := range m.data.Matches {
-		if filterMatchFound(match, expr) {
-			return i
-		}
-	}
-
-	return -1
-}
-
-func (m model) findNext(expr string) int {
-	i := m.dataRowSelected
-
-	for {
-		i++
-		if i > m.lastRowIndex() {
-			i = 0
-		}
-		if i == m.dataRowSelected {
-			return -1
-		}
-
-		match := m.data.Matches[i]
-		if filterMatchFound(match, expr) {
-			return i
-		}
-	}
-}
-
-func (m model) findPrevious(expr string) int {
-	i := m.dataRowSelected
-
-	for {
-		i--
-		if i < 0 {
-			i = m.lastRowIndex()
-		}
-		if i == m.dataRowSelected {
-			return -1
-		}
-
-		match := m.data.Matches[i]
-		if filterMatchFound(match, expr) {
-			return i
-		}
-	}
-}
-
 func (m model) View() string {
 	output := ""
-	output += renderHeaderRow()
 
-	output += m.renderRowsWindow(m.dataWindowStart, m.dataWindowSize)
+	output += m.table.View()
 
 	if m.mode == ModeFilterEntry {
 		output += m.filter.View()

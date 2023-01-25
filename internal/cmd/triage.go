@@ -35,7 +35,7 @@ func addTriage(parentCmd *cobra.Command) {
 
 			// start app
 
-			p := tea.NewProgram(triage.NewModel(parsed.Normalized()), tea.WithAltScreen())
+			p := tea.NewProgram(triage.New(parsed.Normalized()), tea.WithAltScreen())
 			if _, err := p.Run(); err != nil {
 				return err
 			}
