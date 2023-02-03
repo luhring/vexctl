@@ -6,19 +6,22 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/openvex/vexctl/internal/triage/details"
 	"github.com/openvex/vexctl/internal/triage/table"
 	"github.com/openvex/vexctl/pkg/formats"
 )
 
 type model struct {
-	data formats.Normalized
+	height, width int
 
-	dataWindowStart, dataWindowSize int
-	dataRowSelected                 int
+	data formats.Normalized
 
 	mode   Mode
 	table  table.Model
 	filter textinput.Model
+
+	showDetails bool
+	details     details.Model
 }
 
 type Mode int
@@ -43,6 +46,7 @@ func New(data formats.Normalized) tea.Model {
 	})
 
 	return model{
+		data:   data,
 		table:  table.New(data),
 		mode:   ModeDataScroll,
 		filter: textinput.Model{},
@@ -75,6 +79,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = ModeFilterEntry
 				m.filter = newFilterTextInput()
 				m.filter.Focus()
+				m = m.updateComponentSizes()
 				return m, textinput.Blink
 
 			case "n":
@@ -100,6 +105,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.table = updatedTable
 					return m, nil
 				}
+
+			case "d":
+				if !m.showDetails {
+					m.showDetails = true
+				} else {
+					m.showDetails = false
+				}
+
+				m = m.updateComponentSizes()
+				return m, nil
 			}
 
 			m.table, cmd = m.table.Update(msg)
@@ -118,12 +133,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.filter.Blur()
 				m.mode = ModeDataScroll
+				m = m.updateComponentSizes()
 				return m, nil
 			}
 
 			if msg.String() == "esc" {
 				m.filter.Blur()
 				m.mode = ModeDataScroll
+				m = m.updateComponentSizes()
 				return m, nil
 			}
 
@@ -132,12 +149,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		m.table = m.table.SetHeight(msg.Height)
+		m.height = msg.Height
+		m.width = msg.Width
+
+		m = m.updateComponentSizes()
+
 		return m, nil
 	}
 
 	m.filter, cmd = m.filter.Update(msg)
 	return m, cmd
+}
+
+func (m model) updateComponentSizes() model {
+	tableHeight, detailsHeight := m.expectedComponentHeights()
+
+	m.table = m.table.SetHeight(tableHeight).SetWidth(m.width)
+	m.details = m.details.SetHeight(detailsHeight).SetWidth(m.width)
+
+	return m
 }
 
 func (m model) View() string {
@@ -146,10 +176,31 @@ func (m model) View() string {
 	output += m.table.View()
 
 	if m.mode == ModeFilterEntry {
-		output += m.filter.View()
+		output += "\n" + m.filter.View()
+	}
+
+	if m.showDetails {
+		selectedMatch := m.data.Matches[m.table.IndexSelected()]
+		output += "\n" + m.details.For(selectedMatch).View()
 	}
 
 	return output
+}
+
+func (m model) expectedComponentHeights() (table, details int) {
+	table = m.height
+	details = 0
+
+	if m.showDetails {
+		details = m.height / 2
+		table = m.height - details
+	}
+
+	if m.mode == ModeFilterEntry {
+		table = table - 1
+	}
+
+	return
 }
 
 func newFilterTextInput() textinput.Model {

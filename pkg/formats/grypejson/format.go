@@ -70,7 +70,7 @@ func getPackageLocations(p models.Package) []string {
 	locations := make([]string, 0, len(p.Locations))
 
 	for _, l := range p.Locations {
-		locations = append(locations, l.String())
+		locations = append(locations, l.RealPath)
 	}
 
 	return locations

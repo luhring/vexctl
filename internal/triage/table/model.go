@@ -33,9 +33,11 @@ var (
 )
 
 type Model struct {
-	windowStart    int
-	windowSize     int
-	rowSelected    int
+	height, width int
+
+	firstRowShown int
+	rowSelected   int
+
 	findExpression string
 
 	data formats.Normalized
@@ -43,10 +45,9 @@ type Model struct {
 
 func New(data formats.Normalized) Model {
 	return Model{
-		windowStart: 0,
-		windowSize:  10,
-		rowSelected: 0,
-		data:        data,
+		firstRowShown: 0,
+		rowSelected:   0,
+		data:          data,
 	}
 }
 
@@ -95,13 +96,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) View() string {
 	output := ""
 	output += renderHeaderRow()
-	output += m.renderRowsWindow(m.windowStart, m.windowSize)
+	output += m.renderDataRows()
+
+	output = strings.TrimSuffix(output, "\n")
 
 	return output
 }
 
+func (m Model) IndexSelected() int {
+	return m.rowSelected
+}
+
 func (m Model) SetHeight(h int) Model {
-	m.windowSize = h - 2
+	m.height = h
+	return m
+}
+
+func (m Model) SetWidth(w int) Model {
+	m.width = w
 	return m
 }
 
@@ -196,6 +208,10 @@ func (m Model) selectAndShowRow(i int) Model {
 	return m
 }
 
+func (m Model) countRowsShown() int {
+	return m.height - 1
+}
+
 func (m Model) totalRowCount() int {
 	return len(m.data.Matches)
 }
@@ -205,19 +221,21 @@ func (m Model) lastRowIndex() int {
 }
 
 func (m Model) dataWindowEnd() int {
-	return m.windowStart + m.windowSize - 1
+	return m.firstRowShown + m.countRowsShown() - 1
 }
 
-func (m Model) renderRowsWindow(start, size int) string {
+func (m Model) renderDataRows() string {
 	lastRow := m.lastRowIndex()
 
-	if start > lastRow {
-		return "\n"
+	if m.firstRowShown > lastRow {
+		return ""
 	}
 
 	output := ""
 
-	for i := start; i < start+size; i++ {
+	countRowsShown := m.countRowsShown()
+
+	for i := m.firstRowShown; i < m.firstRowShown+countRowsShown; i++ {
 		if i > lastRow {
 			output += "\n"
 			continue
@@ -251,6 +269,7 @@ func renderDataRow(m formats.Match, isSelected bool) string {
 
 	if isSelected {
 		row = "> " + row
+		row = styleDataRowSelected.Render(row)
 	} else {
 		row = "  " + row
 		row = styleDataRowNotSelected.Render(row)
@@ -296,14 +315,14 @@ func (m Model) jumpToEnd() Model {
 }
 
 func (m Model) pageUp() Model {
-	if m.rowSelected > m.windowStart {
-		m.rowSelected = m.windowStart
+	if m.rowSelected > m.firstRowShown {
+		m.rowSelected = m.firstRowShown
 		return m
 	}
 
 	// already at the top of the window
 
-	newSelectedRow := m.rowSelected - m.windowSize
+	newSelectedRow := m.rowSelected - m.countRowsShown()
 	if newSelectedRow < 0 {
 		// catch out-of-bounds case
 		newSelectedRow = 0
@@ -327,7 +346,7 @@ func (m Model) pageDown() Model {
 
 	// already at the bottom of the window
 
-	newSelectedRow := m.rowSelected + m.windowSize
+	newSelectedRow := m.rowSelected + m.countRowsShown()
 	if lastRow := m.lastRowIndex(); newSelectedRow > lastRow {
 		// catch out-of-bounds case
 		newSelectedRow = lastRow
@@ -341,7 +360,7 @@ func (m Model) pageDown() Model {
 func (m Model) updateWindow() Model {
 	newSelectedIndex := m.rowSelected
 
-	windowFirst := m.windowStart
+	windowFirst := m.firstRowShown
 	windowLast := m.dataWindowEnd()
 
 	if newSelectedIndex >= windowFirst && newSelectedIndex <= windowLast {
@@ -351,14 +370,14 @@ func (m Model) updateWindow() Model {
 
 	if newSelectedIndex < windowFirst {
 		// jump window backward to start at selection
-		m.windowStart = newSelectedIndex
+		m.firstRowShown = newSelectedIndex
 		return m
 	}
 
 	if newSelectedIndex > windowLast {
 		// jump window forward so that windowLast is selection
-		newStart := newSelectedIndex - (m.windowSize - 1)
-		m.windowStart = newStart
+		newStart := newSelectedIndex - (m.countRowsShown() - 1)
+		m.firstRowShown = newStart
 		return m
 	}
 
